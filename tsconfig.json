@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
     "lib": ["esnext"],
+    "target": "ES6",
     "module": "commonjs",
     "strict": true,
     "esModuleInterop": true,
-    "sourceMap": true,
     "outDir": "dist",
     "declaration": true,
     "incremental": true
