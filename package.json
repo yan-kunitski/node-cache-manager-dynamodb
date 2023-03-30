@@ -4,7 +4,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && rm dist/tsconfig.build.tsbuildinfo",
     "test": "vitest",
     "lint": "eslint --cache --max-warnings 0 --fix '**/*.{ts,mts,js}'",
     "format": "prettier --write '**/*.{md,json,yml,ts}'"
