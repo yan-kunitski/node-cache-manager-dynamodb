@@ -1,0 +1,8 @@
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:1.21.0
+    container_name: node-cache-manager-dynamodb-test
+    command: '-jar DynamoDBLocal.jar -inMemory -port 4566'
+    restart: unless-stopped
+    ports:
+      - '4566:4566'

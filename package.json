@@ -1,0 +1,50 @@
+{
+  "name": "node-cache-manager-dynamodb",
+  "version": "0.0.1",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "test": "vitest",
+    "lint": "eslint --cache --max-warnings 0 --fix '**/*.{ts,mts,js}'",
+    "format": "prettier --write '**/*.{md,json,yml,ts}'"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yan-kunitski/node-cache-manager-dynamodb"
+  },
+  "keywords": [
+    "cache",
+    "dynamodb",
+    "db cache",
+    "database cache"
+  ],
+  "authors": [
+    {
+      "name": "Yan Kunitski",
+      "email": "yankunitski@gmail.com"
+    }
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/lodash.chunk": "^4.2.7",
+    "@typescript-eslint/eslint-plugin": "^5.57.0",
+    "@typescript-eslint/parser": "^5.57.0",
+    "cache-manager": "^5.2.0",
+    "eslint": "^8.36.0",
+    "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "eslint-plugin-unused-imports": "^2.0.0",
+    "prettier": "^2.8.7",
+    "typescript": "^5.0.2",
+    "vitest": "^0.29.7"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.299.0",
+    "@aws-sdk/util-dynamodb": "^3.300.0",
+    "lodash.chunk": "^4.2.0"
+  }
+}
