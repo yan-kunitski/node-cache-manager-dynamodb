@@ -9,6 +9,7 @@ import {
   DeleteItemCommand,
   BatchGetItemCommand,
   BatchWriteItemCommand,
+  UpdateItemCommand,
   ScanCommand,
   QueryCommand
 } from '@aws-sdk/client-dynamodb';
@@ -26,6 +27,7 @@ import {
   buildScanKeysInput,
   buildQueryKeysInput,
   buildTTLInput,
+  buildTouchInput,
   isExpired
 } from './utils';
 
@@ -170,6 +172,14 @@ class DynamoDBStore implements Store {
     const expiresAt = response.Item?.[this.config.keys.ex].N;
 
     return expiresAt ? parseInt(expiresAt, 10) * 1000 - Date.now() : -1;
+  }
+
+  async touch(key: string, ttl?: Milliseconds) {
+    const input = buildTouchInput(key, {
+      ...this.config,
+      ttl: ttl || this.config.ttl || DynamoDBStore.defaultTtl
+    });
+    await this.client.send(new UpdateItemCommand(input));
   }
 }
 

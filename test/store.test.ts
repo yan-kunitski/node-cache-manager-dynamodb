@@ -116,6 +116,17 @@ describe('DynamoDBStore', function () {
     expect(ttl > 0).toBeTruthy();
   });
 
+  it('should update only ttl', async () => {
+    const ttl = await store.ttl('123+foo');
+    await store.touch('123+foo', config.ttl * 1000);
+
+    const updated = await store.get('123+foo');
+    const newTtl = await store.ttl('123+foo');
+
+    expect(ttl.toString().length < newTtl.toString().length).toBeTruthy();
+    expect(updated).toBe(1000);
+  });
+
   it('should delete batch of items', async () => {
     const keys = ['123+foo', '123+baz'];
     await store.mdel(...keys);
