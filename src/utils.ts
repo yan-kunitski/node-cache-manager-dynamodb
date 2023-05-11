@@ -159,3 +159,18 @@ export const buildTTLInput = (key: string, config: Config) => ({
   ProjectionExpression: '#ex',
   ReturnConsumedCapacity: ReturnConsumedCapacity.NONE
 });
+
+export const buildTouchInput = (key: string, config: Config & { ttl: Milliseconds }) => {
+  const expiresAt = msToS(Date.now() + config.ttl).toString();
+
+  return {
+    Key: deserializeKey(key, config),
+    UpdateExpression: 'set #ex = :ex',
+    ExpressionAttributeNames: { '#ex': config.keys.ex },
+    ExpressionAttributeValues: { ':ex': { N: expiresAt } },
+    TableName: config.table,
+    ReturnValues: ReturnValue.NONE,
+    ReturnConsumedCapacity: ReturnConsumedCapacity.NONE,
+    ReturnItemCollectionMetrics: ReturnItemCollectionMetrics.NONE
+  };
+};
