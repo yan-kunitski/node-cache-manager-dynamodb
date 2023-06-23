@@ -42,21 +42,6 @@ class DynamoDBStore implements Store {
         : new DynamoDBClient(this.config.dynamodb);
   }
 
-  private async scan() {
-    let cursor: Record<string, AttributeValue> | undefined = undefined;
-    const keys: string[] = [];
-
-    do {
-      const input = buildScanKeysInput(cursor, this.config);
-      const items = await this.client.send(new ScanCommand(input));
-      const serialized = (items.Items || []).map((item) => serializeKey(item, this.config));
-      keys.push(...serialized);
-      cursor = items.LastEvaluatedKey;
-    } while (!!cursor);
-
-    return keys;
-  }
-
   async get<T>(key: string) {
     const input = buildGetInput(key, this.config);
     const response = await this.client.send(new GetItemCommand(input));
@@ -144,26 +129,42 @@ class DynamoDBStore implements Store {
     );
   }
 
-  async reset() {
-    const keys = await this.scan();
-    await this.mdel(...keys);
-  }
-
   async keys(pattern?: string) {
     // DynamoDB supports only "begin_with" to retrieve items with similar !!secondary!! keys
     // So it's impossible to find keys by pattern "*foo_bar*", but it's possible to use "baz+foo_ba*"
     // https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/Query.html
 
-    if (!pattern || !this.config.keys.sk) return this.scan();
-
     validateKeyPattern(pattern);
-    const input = buildQueryKeysInput(
-      pattern,
-      this.config as Config & { keys: Required<Config['keys']> }
-    );
-    const response = await this.client.send(new QueryCommand(input));
+    let cursor: Record<string, AttributeValue> | undefined = undefined;
+    const keys: string[] = [];
 
-    return response.Items ? response.Items.map((item) => serializeKey(item, this.config)) : [];
+    do {
+      let command: QueryCommand | ScanCommand;
+
+      if (pattern) {
+        const input = buildQueryKeysInput(
+          pattern,
+          cursor,
+          this.config as Config & { keys: Required<Config['keys']> }
+        );
+        command = new QueryCommand(input);
+      } else {
+        const input = buildScanKeysInput(cursor, this.config);
+        command = new ScanCommand(input);
+      }
+
+      const response = await this.client.send(command);
+      const serialized = (response.Items || []).map((item) => serializeKey(item, this.config));
+      keys.push(...serialized);
+      cursor = response.LastEvaluatedKey;
+    } while (!!cursor);
+
+    return keys;
+  }
+
+  async reset() {
+    const keys = await this.keys();
+    await this.mdel(...keys);
   }
 
   async ttl(key: string): Promise<Milliseconds> {

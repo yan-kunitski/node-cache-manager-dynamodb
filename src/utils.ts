@@ -36,9 +36,14 @@ export const deserializeKey = (key: string, config: Config) => {
   return dbKey;
 };
 
-export const validateKeyPattern = (pattern: string) => {
+export const validateKeyPattern = (pattern?: string) => {
+  if (!pattern) return;
+
   const isValid =
-    typeof pattern === 'string' && pattern.endsWith(MASK) && pattern.split(MASK).length < 3;
+    typeof pattern === 'string' &&
+    pattern.endsWith(MASK) &&
+    pattern.split(MASK).length < 3 &&
+    pattern.split(DELIMITER).length === 2;
 
   if (isValid) return;
 
@@ -120,11 +125,7 @@ export const buildScanKeysInput = (
 ) => {
   const input = {
     TableName: config.table,
-    Limit: 1,
-    ExpressionAttributeNames: {
-      '#pk': config.keys.pk,
-      '#sk': config.keys.sk || ''
-    },
+    ExpressionAttributeNames: { '#pk': config.keys.pk, '#sk': config.keys.sk },
     ProjectionExpression: config.keys.sk ? '#pk, #sk' : '#pk'
   };
 
@@ -137,19 +138,28 @@ export const buildScanKeysInput = (
 
 export const buildQueryKeysInput = (
   pattern: string,
+  cursor: Record<string, AttributeValue> | undefined,
   config: Config & { keys: Required<Config['keys']> }
 ) => {
   const key = deserializeKey(pattern.replace(MASK, ''), config);
   const pk = key[config.keys.pk];
   const sk = key[config.keys.sk];
-
-  return {
-    ExpressionAttributeNames: { '#pk': config.keys.pk, '#sk': config.keys.sk },
+  const input = {
+    TableName: config.table,
+    ProjectionExpression: config.keys.sk ? '#pk, #sk' : '#pk',
     ExpressionAttributeValues: { ':pk': pk, ':sk': sk },
     KeyConditionExpression: '#pk = :pk and begins_with(#sk, :sk)',
-    ProjectionExpression: '#pk, #sk',
-    TableName: config.table
+    ExpressionAttributeNames: {
+      '#pk': config.keys.pk,
+      '#sk': config.keys.sk
+    }
   };
+
+  if (cursor) {
+    Object.assign(input, { ExclusiveStartKey: cursor });
+  }
+
+  return input;
 };
 
 export const buildTTLInput = (key: string, config: Config) => ({

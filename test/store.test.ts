@@ -110,6 +110,12 @@ describe('DynamoDBStore', function () {
     expect(keys.sort()).toStrictEqual(['123+bar', '123+baz']);
   });
 
+  it('should find all keys', async () => {
+    const keys = await store.keys();
+
+    expect(keys.sort()).toStrictEqual(['123+bar', '123+baz', '123+foo', '456+bob']);
+  });
+
   it('should get item ttl', async () => {
     const ttl = await store.ttl('123+foo');
 
