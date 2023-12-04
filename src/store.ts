@@ -77,6 +77,7 @@ class DynamoDBStore implements Store {
         const input = buildMGetInput(keys, this.config);
         const response = await this.client.send(new BatchGetItemCommand(input));
         const items = response.Responses?.[this.config.table] || [];
+        console.log('Found unprocessed items', JSON.stringify(response.UnprocessedKeys));
         const map = items.reduce((acc, item) => {
           const key = serializeKey(item, this.config);
           acc[key] = item;
