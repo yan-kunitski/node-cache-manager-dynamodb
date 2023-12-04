@@ -77,7 +77,7 @@ class DynamoDBStore implements Store {
         const input = buildMGetInput(keys, this.config);
         const response = await this.client.send(new BatchGetItemCommand(input));
         const items = response.Responses?.[this.config.table] || [];
-        console.log('Found unprocessed items', JSON.stringify(response.UnprocessedKeys));
+        console.log('Found unprocessed keys', JSON.stringify(response.UnprocessedKeys || {}));
         const map = items.reduce((acc, item) => {
           const key = serializeKey(item, this.config);
           acc[key] = item;
@@ -101,7 +101,7 @@ class DynamoDBStore implements Store {
   async mset(args: [string, unknown][], ttl?: Milliseconds) {
     const chunks = chunk(args, 25);
     await Promise.all(
-      chunks.map((values) => {
+      chunks.map(async (values) => {
         const input = buildMSetInput(
           values.map(([key, data]) => {
             const meta = this.config.meta && this.config.meta(data);
@@ -114,7 +114,10 @@ class DynamoDBStore implements Store {
           }
         );
 
-        return this.client.send(new BatchWriteItemCommand(input));
+        const responses = await this.client.send(new BatchWriteItemCommand(input));
+        console.log('Found unprocessed items', JSON.stringify(responses.UnprocessedItems || {}));
+
+        return responses;
       })
     );
   }
@@ -151,6 +154,7 @@ class DynamoDBStore implements Store {
         command = new QueryCommand(input);
       } else {
         const input = buildScanKeysInput(cursor, this.config);
+        // @ts-ignore
         command = new ScanCommand(input);
       }
 
