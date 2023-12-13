@@ -3,6 +3,8 @@ import chunk from 'lodash.chunk';
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb';
 import {
   AttributeValue,
+  KeysAndAttributes,
+  WriteRequest,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
@@ -15,9 +17,9 @@ import {
 } from '@aws-sdk/client-dynamodb';
 
 import { Config } from './types';
+import { serializeKey, validateKeyPattern, isExpired } from './utils/item';
+import { backoff, UnprocessedDataException } from './utils/backoff';
 import {
-  serializeKey,
-  validateKeyPattern,
   buildGetInput,
   buildSetInput,
   buildDelInput,
@@ -27,9 +29,8 @@ import {
   buildScanKeysInput,
   buildQueryKeysInput,
   buildTTLInput,
-  buildTouchInput,
-  isExpired
-} from './utils';
+  buildTouchInput
+} from './utils/command';
 
 class DynamoDBStore implements Store {
   private client: DynamoDBClient;
@@ -72,12 +73,24 @@ class DynamoDBStore implements Store {
     // batch get https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchGetItem.html
     // batch write https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_BatchWriteItem.html
     const chunks = chunk(args, 100);
-    const items = await Promise.all(
+    const records = await Promise.all(
       chunks.map(async (keys) => {
-        const input = buildMGetInput(keys, this.config);
-        const response = await this.client.send(new BatchGetItemCommand(input));
-        const items = response.Responses?.[this.config.table] || [];
-        console.log('Found unprocessed keys', JSON.stringify(response.UnprocessedKeys || {}));
+        let unprocessed: Record<string, KeysAndAttributes> | undefined;
+        const items: Record<string, AttributeValue>[] = [];
+        const request = async () => {
+          const input = buildMGetInput(keys, { ...this.config, unprocessed });
+          const responses = await this.client.send(new BatchGetItemCommand(input));
+          const data = responses.Responses?.[this.config.table] || [];
+          items.push(...data);
+
+          if (responses.UnprocessedKeys && this.config.table in responses.UnprocessedKeys) {
+            unprocessed = responses.UnprocessedKeys;
+            throw new UnprocessedDataException('mget');
+          }
+        };
+
+        await backoff(request);
+
         const map = items.reduce((acc, item) => {
           const key = serializeKey(item, this.config);
           acc[key] = item;
@@ -95,29 +108,36 @@ class DynamoDBStore implements Store {
       })
     );
 
-    return items.flat();
+    return records.flat();
   }
 
   async mset(args: [string, unknown][], ttl?: Milliseconds) {
     const chunks = chunk(args, 25);
     await Promise.all(
       chunks.map(async (values) => {
-        const input = buildMSetInput(
-          values.map(([key, data]) => {
-            const meta = this.config.meta && this.config.meta(data);
+        let unprocessed: Record<string, WriteRequest[]> | undefined;
+        const request = async () => {
+          const input = buildMSetInput(
+            values.map(([key, data]) => {
+              const meta = this.config.meta && this.config.meta(data);
 
-            return [key, marshall({ data, ...meta })];
-          }),
-          {
-            ...this.config,
-            ttl: ttl || this.config.ttl || DynamoDBStore.defaultTtl
+              return [key, marshall({ data, ...meta })];
+            }),
+            {
+              ...this.config,
+              unprocessed,
+              ttl: ttl || this.config.ttl || DynamoDBStore.defaultTtl
+            }
+          );
+          const responses = await this.client.send(new BatchWriteItemCommand(input));
+
+          if (responses.UnprocessedItems && this.config.table in responses.UnprocessedItems) {
+            unprocessed = responses.UnprocessedItems;
+            throw new UnprocessedDataException('mset');
           }
-        );
+        };
 
-        const responses = await this.client.send(new BatchWriteItemCommand(input));
-        console.log('Found unprocessed items', JSON.stringify(responses.UnprocessedItems || {}));
-
-        return responses;
+        await backoff(request);
       })
     );
   }
@@ -125,10 +145,19 @@ class DynamoDBStore implements Store {
   async mdel(...args: string[]) {
     const chunks = chunk(args, 25);
     await Promise.all(
-      chunks.map((keys) => {
-        const input = buildMDelInput(keys, this.config);
+      chunks.map(async (keys) => {
+        let unprocessed: Record<string, WriteRequest[]> | undefined;
+        const request = async () => {
+          const input = buildMDelInput(keys, { ...this.config, unprocessed });
+          const responses = await this.client.send(new BatchWriteItemCommand(input));
 
-        return this.client.send(new BatchWriteItemCommand(input));
+          if (responses.UnprocessedItems && this.config.table in responses.UnprocessedItems) {
+            unprocessed = responses.UnprocessedItems;
+            throw new UnprocessedDataException('mdel');
+          }
+        };
+
+        await backoff(request);
       })
     );
   }
