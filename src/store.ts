@@ -85,7 +85,7 @@ class DynamoDBStore implements Store {
 
           if (responses.UnprocessedKeys && this.config.table in responses.UnprocessedKeys) {
             unprocessed = responses.UnprocessedKeys;
-            throw new UnprocessedDataException('mget');
+            throw new UnprocessedDataException(`mget:firstKeyInList:${keys[0]}`);
           }
         };
 
@@ -133,7 +133,7 @@ class DynamoDBStore implements Store {
 
           if (responses.UnprocessedItems && this.config.table in responses.UnprocessedItems) {
             unprocessed = responses.UnprocessedItems;
-            throw new UnprocessedDataException('mset');
+            throw new UnprocessedDataException(`mset:firstKeyInList:${values[0][0]}`);
           }
         };
 
@@ -153,7 +153,7 @@ class DynamoDBStore implements Store {
 
           if (responses.UnprocessedItems && this.config.table in responses.UnprocessedItems) {
             unprocessed = responses.UnprocessedItems;
-            throw new UnprocessedDataException('mdel');
+            throw new UnprocessedDataException(`mdel:firstKeyInList:${keys[0]}`);
           }
         };
 
