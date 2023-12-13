@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, expect, afterAll } from 'vitest';
+import { describe, it, beforeAll, expect, afterAll, vi } from 'vitest';
 import {
   CreateTableCommand,
   DeleteTableCommand,
@@ -7,7 +7,8 @@ import {
 } from '@aws-sdk/client-dynamodb';
 
 import { create, DynamoDBStore } from '../src';
-import { msToS } from '../src/utils';
+import { msToS } from '../src/utils/item';
+import { UnprocessedDataException } from '../src/utils/backoff';
 
 describe('DynamoDBStore', function () {
   let client: DynamoDBClient;
@@ -20,7 +21,7 @@ describe('DynamoDBStore', function () {
   };
 
   beforeAll(async () => {
-    client = new DynamoDBClient({ endpoint: 'http://localhost:4566', region: 'us-east-1' });
+    client = new DynamoDBClient({ endpoint: 'http://127.0.0.1:4566', region: 'us-east-1' });
     store = create({ ...config, dynamodb: client });
 
     await client.send(
@@ -140,6 +141,248 @@ describe('DynamoDBStore', function () {
 
     expect(items).toStrictEqual([undefined, undefined]);
   });
+
+  it(
+    'should backoff mset functionality',
+    async () => {
+      const sendMock = vi.spyOn(client, 'send');
+
+      // regular flow (lot of data)
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {
+          TestCache: [
+            { PutRequest: { Item: { b: { N: '1' } } } },
+            { PutRequest: { Item: { c: { N: '1' } } } }
+          ]
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {
+          TestCache: [{ PutRequest: { Item: { c: { N: '1' } } } }]
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {}
+      });
+
+      await store.mset([
+        ['123+aaa', { a: 1 }],
+        ['123+bbb', { b: 1 }],
+        ['123+ccc', { c: 1 }]
+      ]);
+      expect(sendMock).toHaveBeenCalledTimes(3);
+
+      // never done (dynamodb throttling or quotas exceeding)
+      sendMock.mockClear();
+      // @ts-ignore
+      sendMock.mockResolvedValue({
+        UnprocessedItems: {
+          TestCache: [{ PutRequest: { Item: { b: { N: '1' } } } }]
+        }
+      });
+      let error: unknown;
+
+      try {
+        await store.mset([['123+aaa', 100]]);
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(10);
+      expect(error).toBeInstanceOf(UnprocessedDataException);
+
+      // dynamodb throws service exception
+      sendMock.mockClear();
+      const ddbError = new Error('DDB Exception');
+      // @ts-ignore
+      sendMock.mockRejectedValueOnce(ddbError);
+
+      try {
+        await store.mset([['123+aaa', 100]]);
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(error).toEqual(ddbError);
+    },
+    { timeout: 60000 }
+  );
+
+  it(
+    'should backoff mget functionality',
+    async () => {
+      const sendMock = vi.spyOn(client, 'send');
+
+      // regular flow (lot of data)
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        Responses: {
+          TestCache: [
+            {
+              Id: { S: '123' },
+              Name: { S: 'aaa' },
+              data: { M: { a: { N: '1' } } },
+              ExpiresAt: { N: (Date.now() / 1000 + 600).toString() },
+              CreatedAt: { N: '1701732465' }
+            }
+          ]
+        },
+        UnprocessedKeys: {
+          TestCache: {
+            Keys: [
+              { Id: { S: '123' }, Name: { S: 'bbb' } },
+              { Id: { S: '123' }, Name: { S: 'ccc' } }
+            ]
+          }
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        Responses: {
+          TestCache: [
+            {
+              Id: { S: '123' },
+              Name: { S: 'bbb' },
+              data: { M: { b: { N: '1' } } },
+              ExpiresAt: { N: (Date.now() / 1000 + 600).toString() },
+              CreatedAt: { N: '1701732465' }
+            }
+          ]
+        },
+        UnprocessedKeys: {
+          TestCache: {
+            Keys: [{ Id: { S: '123' }, Name: { S: 'ccc' } }]
+          }
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        Responses: {
+          TestCache: [
+            {
+              Id: { S: '123' },
+              Name: { S: 'ccc' },
+              data: { M: { c: { N: '1' } } },
+              ExpiresAt: { N: (Date.now() / 1000 + 600).toString() },
+              CreatedAt: { N: '1701732465' }
+            }
+          ]
+        },
+        UnprocessedKeys: {}
+      });
+
+      const values = await store.mget('123+aaa', '123+bbb', '123+ccc');
+      expect(sendMock).toHaveBeenCalledTimes(3);
+      expect(values).toEqual([{ a: 1 }, { b: 1 }, { c: 1 }]);
+
+      // never done (dynamodb throttling or quotas exceeding)
+      sendMock.mockClear();
+      // @ts-ignore
+      sendMock.mockResolvedValue({
+        UnprocessedKeys: {
+          TestCache: {
+            Keys: [{ Id: { S: '123' }, Name: { S: 'bbb' } }]
+          }
+        }
+      });
+      let error: unknown;
+
+      try {
+        await store.mget('123+aaa', '123+bbb', '123+ccc');
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(10);
+      expect(error).toBeInstanceOf(UnprocessedDataException);
+
+      // dynamodb throws service exception
+      sendMock.mockClear();
+      const ddbError = new Error('DDB Exception');
+      // @ts-ignore
+      sendMock.mockRejectedValueOnce(ddbError);
+
+      try {
+        await store.mget('123+aaa', '123+bbb', '123+ccc');
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(error).toEqual(ddbError);
+    },
+    { timeout: 60000 }
+  );
+
+  it(
+    'should backoff mdel functionality',
+    async () => {
+      const sendMock = vi.spyOn(client, 'send');
+
+      // regular flow (lot of data)
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {
+          TestCache: [
+            { DeleteRequest: { Key: { Id: { S: '123' }, Name: { S: 'bbb' } } } },
+            { DeleteRequest: { Key: { Id: { S: '123' }, Name: { S: 'ccc' } } } }
+          ]
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {
+          TestCache: [{ DeleteRequest: { Key: { Id: { S: '123' }, Name: { S: 'ccc' } } } }]
+        }
+      });
+      // @ts-ignore
+      sendMock.mockResolvedValueOnce({
+        UnprocessedItems: {}
+      });
+
+      await store.mdel('123+aaa', '123+bbb', '123+ccc');
+      expect(sendMock).toHaveBeenCalledTimes(3);
+
+      // never done (dynamodb throttling or quotas exceeding)
+      sendMock.mockClear();
+      // @ts-ignore
+      sendMock.mockResolvedValue({
+        UnprocessedItems: {
+          TestCache: [{ DeleteRequest: { Key: { Id: { S: '123' }, Name: { S: 'ccc' } } } }]
+        }
+      });
+      let error: unknown;
+
+      try {
+        await store.mdel('123+aaa', '123+bbb', '123+ccc');
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(10);
+      expect(error).toBeInstanceOf(UnprocessedDataException);
+
+      // dynamodb throws service exception
+      sendMock.mockClear();
+      const ddbError = new Error('DDB Exception');
+      // @ts-ignore
+      sendMock.mockRejectedValueOnce(ddbError);
+
+      try {
+        await store.mdel('123+aaa', '123+bbb', '123+ccc');
+      } catch (err) {
+        error = err;
+      }
+
+      expect(sendMock).toHaveBeenCalledTimes(1);
+      expect(error).toEqual(ddbError);
+    },
+    { timeout: 60000 }
+  );
 
   it('should reset cache', async () => {
     await store.reset();
